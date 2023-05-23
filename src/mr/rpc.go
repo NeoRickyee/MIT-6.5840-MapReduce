@@ -6,8 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+)
 
 //
 // example to show how to declare the arguments
@@ -22,8 +24,13 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
+// RPC arguments to get the next file name to handle
+type GetNextFileNameToHandleArgs struct{}
+type GetNextFileNameToHandleReply struct {
+	FileName string
+}
 
+// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
