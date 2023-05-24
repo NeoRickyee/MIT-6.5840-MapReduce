@@ -7,21 +7,37 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 type Coordinator struct {
-	// Your definitions here.
+	nReduce               int
 	Files                 []string
-	PendingReadFilesIndex int
+	PendingReadFilesIndex FileIndex
 }
 
-func (c *Coordinator) GetNextFileName() (string, error) {
-	if c.PendingReadFilesIndex >= len(c.Files) {
-		return "", errors.New("No more file to process")
+type FileIndex struct {
+	Mu    sync.Mutex
+	Index int
+}
+
+func (i *FileIndex) GetAndIncrementIndex() int {
+	i.Mu.Lock()
+	defer func() {
+		i.Index++
+		i.Mu.Unlock()
+	}()
+	return i.Index
+}
+
+// return File Name, Index, Error
+func (c *Coordinator) GetNextFileName() (string, int, error) {
+	var index int = c.PendingReadFilesIndex.GetAndIncrementIndex()
+	if index >= len(c.Files) {
+		return "", index, errors.New("No more file to process")
 	}
-	file_name := c.Files[c.PendingReadFilesIndex]
-	c.PendingReadFilesIndex++
-	return file_name, nil
+	file_name := c.Files[index]
+	return file_name, index, nil
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -37,11 +53,13 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 // RPC handler that replies the name of a file that will be handled by
 // the worker thread
 func (c *Coordinator) NextFileNameToHandle(args *GetNextFileNameToHandleArgs, reply *GetNextFileNameToHandleReply) error {
-	file_name, e := c.GetNextFileName()
+	file_name, index, e := c.GetNextFileName()
 	if e != nil {
 		return e
 	}
 	reply.FileName = file_name
+	reply.MapTaskNumber = index
+	reply.nReduce = c.nReduce
 	return nil
 }
 
@@ -73,7 +91,7 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{files, 0}
+	c := Coordinator{nReduce, files, FileIndex{Index: 0}}
 
 	// Your code here.
 

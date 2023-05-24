@@ -27,7 +27,9 @@ type ExampleReply struct {
 // RPC arguments to get the next file name to handle
 type GetNextFileNameToHandleArgs struct{}
 type GetNextFileNameToHandleReply struct {
-	FileName string
+	FileName      string
+	MapTaskNumber int
+	nReduce       int
 }
 
 // Add your RPC definitions here.

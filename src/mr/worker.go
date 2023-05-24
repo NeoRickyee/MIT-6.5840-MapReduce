@@ -3,9 +3,20 @@ package mr
 import (
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"log"
 	"net/rpc"
+	"os"
+	"sort"
 )
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -29,12 +40,39 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
-	file_name := FetchFileNameToMap()
-	fmt.Printf("Fetched Map file name: %s\n", file_name)
+	file_name, nReduce := FetchFileNameToMap()
+
+	// TODO: create failure condition for no Map task distributed
 	if file_name == "" {
-		// close this Worker thread
+		// wait to be distributed reduce task
 	}
 
+	fmt.Printf("Fetched Map file name: %s, Total threads: %v\n", file_name, nReduce)
+
+	file, err := os.Open(file_name)
+	if err != nil {
+		log.Fatalf("cannot open %v", file_name)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", file_name)
+	}
+	file.Close()
+	kva := mapf(file_name, string(content))
+	sort.Sort(ByKey(kva))
+
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		// TODO: group the results together
+	}
 }
 
 // example function to show how to make an RPC call to the coordinator.
@@ -64,17 +102,17 @@ func CallExample() {
 	}
 }
 
-func FetchFileNameToMap() string {
+func FetchFileNameToMap() (string, int) {
 	args := GetNextFileNameToHandleArgs{}
 	reply := GetNextFileNameToHandleReply{}
 
 	ok := call("Coordinator.NextFileNameToHandle", &args, &reply)
 	if ok {
-		return reply.FileName
+		return reply.FileName, reply.nReduce
 	} else {
 		fmt.Printf("Fetch Map file name failed!\n")
 	}
-	return ""
+	return "", 0
 }
 
 // send an RPC request to the coordinator, wait for the response.
