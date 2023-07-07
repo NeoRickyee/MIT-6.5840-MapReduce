@@ -24,12 +24,16 @@ type ExampleReply struct {
 	Y int
 }
 
+// RPC arguments to initialize a worker
+// TODO: write this
+
 // RPC arguments to get the next file name to handle
 type GetNextFileNameToHandleArgs struct{}
 type GetNextFileNameToHandleReply struct {
-	FileName      string
-	MapTaskNumber int
-	nReduce       int
+	FileName         string
+	MapTaskNumber    int
+	nReduce          int
+	WaitForNextStage bool
 }
 
 // Add your RPC definitions here.

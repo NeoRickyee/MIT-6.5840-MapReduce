@@ -50,16 +50,25 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
+// RPC handler that initialize a worker
+//func (c *Coordinator) InitializeWorker(args *)
+// TODO: finish this
+
 // RPC handler that replies the name of a file that will be handled by
 // the worker thread
 func (c *Coordinator) NextFileNameToHandle(args *GetNextFileNameToHandleArgs, reply *GetNextFileNameToHandleReply) error {
 	file_name, index, e := c.GetNextFileName()
 	if e != nil {
-		return e
+		reply.FileName = ""
+		reply.MapTaskNumber = index
+		reply.nReduce = c.nReduce
+		reply.WaitForNextStage = true
+	} else {
+		reply.FileName = file_name
+		reply.MapTaskNumber = index
+		reply.nReduce = c.nReduce
+		reply.WaitForNextStage = false
 	}
-	reply.FileName = file_name
-	reply.MapTaskNumber = index
-	reply.nReduce = c.nReduce
 	return nil
 }
 

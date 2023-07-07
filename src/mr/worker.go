@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
@@ -35,44 +36,60 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	var nReduce int = 0
+	intermediate := []KeyValue{}
+	for {
+		file_name, nReduceValue, wait_for_next_stage := FetchFileNameToMap()
+		nReduce = nReduceValue
+		if wait_for_next_stage {
+			break
+		}
+		WorkerMapTask(mapf, file_name, &intermediate)
+	}
+	sort.Sort(ByKey(intermediate))
+	StoreIntermediateToDisk(intermediate, nReduce)
+}
 
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-	file_name, nReduce := FetchFileNameToMap()
-
+func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, intermediate *[]KeyValue) {
 	// TODO: create failure condition for no Map task distributed
 	if file_name == "" {
-		// wait to be distributed reduce task
+		return
 	}
 
-	fmt.Printf("Fetched Map file name: %s, Total threads: %v\n", file_name, nReduce)
+	// fmt.Printf("Fetched Map file name: %s, Total threads: %v\n", file_name, nReduce)
 
 	file, err := os.Open(file_name)
 	if err != nil {
 		log.Fatalf("cannot open %v", file_name)
+		return
 	}
 	content, err := ioutil.ReadAll(file)
 	if err != nil {
 		log.Fatalf("cannot read %v", file_name)
+		return
 	}
 	file.Close()
 	kva := mapf(file_name, string(content))
-	sort.Sort(ByKey(kva))
+	*intermediate = append(*intermediate, kva...)
+}
 
-	i := 0
-	for i < len(kva) {
-		j := i + 1
-		for j < len(kva) && kva[j].Key == kva[i].Key {
-			j++
-		}
-		values := []string{}
-		for k := i; k < j; k++ {
-			values = append(values, kva[k].Value)
-		}
-		// TODO: group the results together
+func StoreIntermediateToDisk(intermediate []KeyValue, nReduce int) {
+	intermediate_for_each_worker := make([][]KeyValue, nReduce)
+	for _, key_value := range intermediate {
+		var map_task_number int = ihash(key_value.Key) % nReduce
+		intermediate_for_each_worker[map_task_number] = append(intermediate_for_each_worker[map_task_number], key_value)
 	}
+
+	// TODO: know the worker number
+	for i := 0; i < nReduce; i++ {
+		var file_name string = "mr-X-Y" // Y=i
+		ofile, _ := os.Create(file_name)
+		enc := json.NewEncoder(ofile)
+		for _, kv := range intermediate_for_each_worker[i] {
+			enc.Encode(&kv)
+		}
+	}
+	// TODO: inform Coordinator write to file is complete
 }
 
 // example function to show how to make an RPC call to the coordinator.
@@ -102,17 +119,22 @@ func CallExample() {
 	}
 }
 
-func FetchFileNameToMap() (string, int) {
+func WorkerInitialize() (int, int) {
+	// TODO: continue here
+	return 0, 1
+}
+
+func FetchFileNameToMap() (string, int, bool) {
 	args := GetNextFileNameToHandleArgs{}
 	reply := GetNextFileNameToHandleReply{}
 
 	ok := call("Coordinator.NextFileNameToHandle", &args, &reply)
 	if ok {
-		return reply.FileName, reply.nReduce
+		return reply.FileName, reply.nReduce, reply.WaitForNextStage
 	} else {
-		fmt.Printf("Fetch Map file name failed!\n")
+		fmt.Printf("Worker fetch Map file name failed!\n")
 	}
-	return "", 0
+	return "", 0, false
 }
 
 // send an RPC request to the coordinator, wait for the response.
