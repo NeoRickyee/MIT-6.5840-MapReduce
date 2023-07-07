@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
+	"strconv"
 )
 
 // for sorting by key.
@@ -37,17 +38,22 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 	var nReduce int = 0
+	var worker_index int
+	nReduce, worker_index = Initialize()
+	if nReduce == 0 {
+		// TODO: use the function that informs coordinator for termination
+	}
 	intermediate := []KeyValue{}
+
 	for {
-		file_name, nReduceValue, wait_for_next_stage := FetchFileNameToMap()
-		nReduce = nReduceValue
+		file_name, wait_for_next_stage := FetchFileNameToMap(worker_index)
 		if wait_for_next_stage {
 			break
 		}
 		WorkerMapTask(mapf, file_name, &intermediate)
 	}
 	sort.Sort(ByKey(intermediate))
-	StoreIntermediateToDisk(intermediate, nReduce)
+	StoreIntermediateToDisk(intermediate, nReduce, worker_index)
 }
 
 func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, intermediate *[]KeyValue) {
@@ -73,16 +79,17 @@ func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, inter
 	*intermediate = append(*intermediate, kva...)
 }
 
-func StoreIntermediateToDisk(intermediate []KeyValue, nReduce int) {
+func StoreIntermediateToDisk(intermediate []KeyValue, nReduce int, worker_index int) {
 	intermediate_for_each_worker := make([][]KeyValue, nReduce)
 	for _, key_value := range intermediate {
 		var map_task_number int = ihash(key_value.Key) % nReduce
 		intermediate_for_each_worker[map_task_number] = append(intermediate_for_each_worker[map_task_number], key_value)
 	}
 
-	// TODO: know the worker number
 	for i := 0; i < nReduce; i++ {
-		var file_name string = "mr-X-Y" // Y=i
+		var file_name string = "mr-"
+		file_name = file_name + strconv.Itoa(worker_index) + "-" + strconv.Itoa(i)
+		// "mr-X-Y"
 		ofile, _ := os.Create(file_name)
 		enc := json.NewEncoder(ofile)
 		for _, kv := range intermediate_for_each_worker[i] {
@@ -119,22 +126,31 @@ func CallExample() {
 	}
 }
 
-func WorkerInitialize() (int, int) {
-	// TODO: continue here
+// Return nReduce, WorkerNumber
+func Initialize() (int, int) {
+	args := InitializeWorkerArgs{}
+	reply := InitializeWorkerReply{}
+
+	ok := call("Coordinator.InitializeWorker", &args, &reply)
+	if ok {
+		return reply.nReduce, reply.WorkerNumber
+	} else {
+		fmt.Printf("Worker initialization failed!\n")
+	}
 	return 0, 1
 }
 
-func FetchFileNameToMap() (string, int, bool) {
-	args := GetNextFileNameToHandleArgs{}
+func FetchFileNameToMap(worker_index int) (string, bool) {
+	args := GetNextFileNameToHandleArgs{worker_index}
 	reply := GetNextFileNameToHandleReply{}
 
 	ok := call("Coordinator.NextFileNameToHandle", &args, &reply)
 	if ok {
-		return reply.FileName, reply.nReduce, reply.WaitForNextStage
+		return reply.FileName, reply.WaitForNextStage
 	} else {
 		fmt.Printf("Worker fetch Map file name failed!\n")
 	}
-	return "", 0, false
+	return "", false
 }
 
 // send an RPC request to the coordinator, wait for the response.

@@ -11,17 +11,30 @@ import (
 )
 
 type Coordinator struct {
-	nReduce               int
-	Files                 []string
-	PendingReadFilesIndex FileIndex
+	nReduce                            int
+	Files                              []string
+	PendingWorkerIndexToAllocate       MutexedInt
+	PendingReadFilesIndex              MutexedInt
+	AssignedFileIndexesFromWorkerIndex Mutexed2DString
 }
 
-type FileIndex struct {
+type MutexedInt struct {
 	Mu    sync.Mutex
 	Index int
 }
 
-func (i *FileIndex) GetAndIncrementIndex() int {
+type Mutexed2DString struct {
+	Mu  sync.Mutex
+	Map [][]string
+}
+
+func (m *Mutexed2DString) AddMapEntry(worker_index int, file_name string) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.Map[worker_index] = append(m.Map[worker_index], file_name)
+}
+
+func (i *MutexedInt) GetAndIncrementIndex() int {
 	i.Mu.Lock()
 	defer func() {
 		i.Index++
@@ -31,13 +44,14 @@ func (i *FileIndex) GetAndIncrementIndex() int {
 }
 
 // return File Name, Index, Error
-func (c *Coordinator) GetNextFileName() (string, int, error) {
+func (c *Coordinator) GetNextFileName(worker_number int) (string, error) {
 	var index int = c.PendingReadFilesIndex.GetAndIncrementIndex()
 	if index >= len(c.Files) {
-		return "", index, errors.New("No more file to process")
+		return "", errors.New("No more file to process")
 	}
 	file_name := c.Files[index]
-	return file_name, index, nil
+	c.AssignedFileIndexesFromWorkerIndex.AddMapEntry(worker_number, file_name)
+	return file_name, nil
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -51,22 +65,26 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 }
 
 // RPC handler that initialize a worker
-//func (c *Coordinator) InitializeWorker(args *)
-// TODO: finish this
+func (c *Coordinator) InitializeWorker(args *InitializeWorkerArgs, reply *InitializeWorkerReply) error {
+	var worker_index int = c.PendingWorkerIndexToAllocate.GetAndIncrementIndex()
+	reply.nReduce = c.nReduce
+	reply.WorkerNumber = worker_index
+	if worker_index >= c.nReduce {
+		log.Fatalf("Allocated too much worker threads")
+		return errors.New("Allocated too much worker threads")
+	}
+	return nil
+}
 
 // RPC handler that replies the name of a file that will be handled by
 // the worker thread
 func (c *Coordinator) NextFileNameToHandle(args *GetNextFileNameToHandleArgs, reply *GetNextFileNameToHandleReply) error {
-	file_name, index, e := c.GetNextFileName()
+	file_name, e := c.GetNextFileName(args.WorkerNumber)
 	if e != nil {
 		reply.FileName = ""
-		reply.MapTaskNumber = index
-		reply.nReduce = c.nReduce
 		reply.WaitForNextStage = true
 	} else {
 		reply.FileName = file_name
-		reply.MapTaskNumber = index
-		reply.nReduce = c.nReduce
 		reply.WaitForNextStage = false
 	}
 	return nil
@@ -100,8 +118,7 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{nReduce, files, FileIndex{Index: 0}}
-
+	c := Coordinator{nReduce, files, MutexedInt{Index: 0}, MutexedInt{Index: 0}, Mutexed2DString{Map: make([][]string, nReduce)}}
 	// Your code here.
 
 	c.server()
