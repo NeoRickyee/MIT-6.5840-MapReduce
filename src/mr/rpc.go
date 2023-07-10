@@ -40,6 +40,11 @@ type GetNextFileNameToHandleReply struct {
 	WaitForNextStage bool
 }
 
+type WorkerMapTaskCompletionArgs struct {
+	WorkerNumber int
+}
+type WorkerMapTaskCompletionReply struct{}
+
 // Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name

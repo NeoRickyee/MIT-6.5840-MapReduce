@@ -54,6 +54,9 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 	sort.Sort(ByKey(intermediate))
 	StoreIntermediateToDisk(intermediate, nReduce, worker_index)
+	IndicateMapTaskCompletion(worker_index)
+
+	//TODO: loop a detection function to initialize Reduce task
 }
 
 func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, intermediate *[]KeyValue) {
@@ -80,6 +83,7 @@ func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, inter
 }
 
 func StoreIntermediateToDisk(intermediate []KeyValue, nReduce int, worker_index int) {
+	// TODO: add error handling
 	intermediate_for_each_worker := make([][]KeyValue, nReduce)
 	for _, key_value := range intermediate {
 		var map_task_number int = ihash(key_value.Key) % nReduce
@@ -96,7 +100,6 @@ func StoreIntermediateToDisk(intermediate []KeyValue, nReduce int, worker_index 
 			enc.Encode(&kv)
 		}
 	}
-	// TODO: inform Coordinator write to file is complete
 }
 
 // example function to show how to make an RPC call to the coordinator.
@@ -151,6 +154,17 @@ func FetchFileNameToMap(worker_index int) (string, bool) {
 		fmt.Printf("Worker fetch Map file name failed!\n")
 	}
 	return "", false
+}
+
+func IndicateMapTaskCompletion(worker_index int) {
+	args := WorkerMapTaskCompletionArgs{worker_index}
+	reply := WorkerMapTaskCompletionReply{}
+
+	ok := call("Coordinator.WorkerMapTaskCompletion", &args, &reply)
+	if !ok {
+		fmt.Printf("Worker indicates Map task completion failed!\n")
+	}
+	return
 }
 
 // send an RPC request to the coordinator, wait for the response.

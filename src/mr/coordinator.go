@@ -16,6 +16,8 @@ type Coordinator struct {
 	PendingWorkerIndexToAllocate       MutexedInt
 	PendingReadFilesIndex              MutexedInt
 	AssignedFileIndexesFromWorkerIndex Mutexed2DString
+
+	WorkerMapTaskCompletionStatus MutexedBoolSlice
 }
 
 type MutexedInt struct {
@@ -26,6 +28,12 @@ type MutexedInt struct {
 type Mutexed2DString struct {
 	Mu  sync.Mutex
 	Map [][]string
+}
+
+type MutexedBoolSlice struct {
+	Mu        sync.Mutex
+	BoolSlice []bool
+	AllTrue   bool
 }
 
 func (m *Mutexed2DString) AddMapEntry(worker_index int, file_name string) {
@@ -41,6 +49,18 @@ func (i *MutexedInt) GetAndIncrementIndex() int {
 		i.Mu.Unlock()
 	}()
 	return i.Index
+}
+
+func (bool_slice *MutexedBoolSlice) SetIndexTrue(index int) {
+	// bool_slice.Mu.Lock()
+	bool_slice.BoolSlice[index] = true
+	// bool_slice.Mu.Unlock()
+	for _, value := range bool_slice.BoolSlice {
+		if !value {
+			return
+		}
+	}
+	bool_slice.AllTrue = true
 }
 
 // return File Name, Index, Error
@@ -90,6 +110,12 @@ func (c *Coordinator) NextFileNameToHandle(args *GetNextFileNameToHandleArgs, re
 	return nil
 }
 
+// RPC handler that indicates that a worker has completed its Map task
+func (c *Coordinator) WorkerMapTaskCompletion(args *WorkerMapTaskCompletionArgs, reply *WorkerMapTaskCompletionReply) error {
+	c.WorkerMapTaskCompletionStatus.SetIndexTrue(args.WorkerNumber)
+	return nil
+}
+
 // start a thread that listens for RPCs from worker.go
 func (c *Coordinator) server() {
 	rpc.Register(c)
@@ -118,8 +144,11 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{nReduce, files, MutexedInt{Index: 0}, MutexedInt{Index: 0}, Mutexed2DString{Map: make([][]string, nReduce)}}
-	// Your code here.
+	c := Coordinator{nReduce, files, MutexedInt{Index: 0}, MutexedInt{Index: 0}, Mutexed2DString{Map: make([][]string, nReduce)}, MutexedBoolSlice{BoolSlice: make([]bool, nReduce), AllTrue: false}}
+
+	for i := 0; i < nReduce; i++ {
+		c.WorkerMapTaskCompletionStatus.BoolSlice[i] = false
+	}
 
 	c.server()
 	return &c
