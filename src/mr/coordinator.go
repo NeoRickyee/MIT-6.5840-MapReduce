@@ -116,6 +116,16 @@ func (c *Coordinator) WorkerMapTaskCompletion(args *WorkerMapTaskCompletionArgs,
 	return nil
 }
 
+// RPC handler that indicates that a worker can start Reduce task
+func (c *Coordinator) WorkerStartReduceTask(args *WorkerWaitForReduceTaskArgs, reply *WorkerWaitForReduceTaskReply) error {
+	if c.WorkerMapTaskCompletionStatus.AllTrue {
+		reply.StartReduceTask = true
+	} else {
+		reply.StartReduceTask = false
+	}
+	return nil
+}
+
 // start a thread that listens for RPCs from worker.go
 func (c *Coordinator) server() {
 	rpc.Register(c)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"time"
 )
 
 // for sorting by key.
@@ -56,12 +57,20 @@ func Worker(mapf func(string, string) []KeyValue,
 	StoreIntermediateToDisk(intermediate, nReduce, worker_index)
 	IndicateMapTaskCompletion(worker_index)
 
-	//TODO: loop a detection function to initialize Reduce task
+	WaitForReduceTask(worker_index)
+	// Permission to start Reduce task is received
+
+	// TODO: start Reduce task
+	WorkerReduceTask(reducef, worker_index, nReduce)
+	// TODO: think about the case where this Worker needs to take over another Reduce task
+
+	// TODO: indicate to Coordinator that this Worker is Done
 }
 
 func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, intermediate *[]KeyValue) {
 	// TODO: create failure condition for no Map task distributed
 	if file_name == "" {
+		log.Fatalf("Map task started but input file name is empty")
 		return
 	}
 
@@ -99,7 +108,57 @@ func StoreIntermediateToDisk(intermediate []KeyValue, nReduce int, worker_index 
 		for _, kv := range intermediate_for_each_worker[i] {
 			enc.Encode(&kv)
 		}
+		ofile.Close()
 	}
+}
+
+func WorkerReduceTask(reducef func(string, []string) string, worker_index int, nReduce int) {
+	// read all files and combine inputs
+	var kva []KeyValue
+	for i := 0; i < nReduce; i++ {
+		var file_name string = "mr-"
+		file_name = file_name + strconv.Itoa(i) + "-" + strconv.Itoa(worker_index)
+		// "mr-X-Y"
+		file, err := os.Open(file_name)
+		if err != nil {
+			log.Fatalf("cannot open %v", file_name)
+			// Could just be this Worker crashed before completing Map Task
+			continue
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+		file.Close()
+	}
+	sort.Sort(ByKey(kva))
+
+	// execute Reduce, and write result to file
+	oname := "mr-out-" + strconv.Itoa(worker_index)
+	ofile, _ := os.Create(oname)
+
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		output := reducef(kva[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+
+		i = j
+	}
+	ofile.Close()
 }
 
 // example function to show how to make an RPC call to the coordinator.
@@ -163,6 +222,23 @@ func IndicateMapTaskCompletion(worker_index int) {
 	ok := call("Coordinator.WorkerMapTaskCompletion", &args, &reply)
 	if !ok {
 		fmt.Printf("Worker indicates Map task completion failed!\n")
+	}
+	return
+}
+
+func WaitForReduceTask(worker_index int) {
+	args := WorkerWaitForReduceTaskArgs{worker_index}
+	reply := WorkerWaitForReduceTaskReply{}
+
+	for {
+		time.Sleep(1 * time.Second) // Sleep for 1 second
+		ok := call("Coordinator.WorkerStartReduceTask", &args, &reply)
+		if !ok {
+			fmt.Printf("Worker wait for reduce task failed!\n")
+		}
+		if reply.StartReduceTask {
+			break
+		}
 	}
 	return
 }

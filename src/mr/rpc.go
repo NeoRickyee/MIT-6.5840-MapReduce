@@ -45,6 +45,13 @@ type WorkerMapTaskCompletionArgs struct {
 }
 type WorkerMapTaskCompletionReply struct{}
 
+type WorkerWaitForReduceTaskArgs struct {
+	WorkerNumber int
+}
+type WorkerWaitForReduceTaskReply struct {
+	StartReduceTask bool
+}
+
 // Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
