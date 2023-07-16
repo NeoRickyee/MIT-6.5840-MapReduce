@@ -42,6 +42,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	var worker_index int
 	nReduce, worker_index = Initialize()
 	if nReduce == 0 {
+		log.Fatalf("nReduce value is 0")
+		return
 		// TODO: use the function that informs coordinator for termination
 	}
 	intermediate := []KeyValue{}
@@ -57,14 +59,25 @@ func Worker(mapf func(string, string) []KeyValue,
 	StoreIntermediateToDisk(intermediate, nReduce, worker_index)
 	IndicateMapTaskCompletion(worker_index)
 
-	WaitForReduceTask(worker_index)
-	// Permission to start Reduce task is received
+	var first_reduce_task bool = true
+	for {
+		terminate_worker, reduce_index := WaitForReduceTask(worker_index, first_reduce_task)
+		if terminate_worker {
+			return
+		}
+		// Permission to start Reduce task is received, start reduce task
+		WorkerReduceTask(reducef, reduce_index, nReduce)
+		first_reduce_task = false
+		// TODO: remove this when have ability to distribute Reduce task
+		IndicateReduceTaskCompletion(reduce_index)
+		time.Sleep(1 * time.Second)
+		break
+	}
 
-	// TODO: start Reduce task
-	WorkerReduceTask(reducef, worker_index, nReduce)
 	// TODO: think about the case where this Worker needs to take over another Reduce task
 
 	// TODO: indicate to Coordinator that this Worker is Done
+
 }
 
 func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, intermediate *[]KeyValue) {
@@ -226,8 +239,8 @@ func IndicateMapTaskCompletion(worker_index int) {
 	return
 }
 
-func WaitForReduceTask(worker_index int) {
-	args := WorkerWaitForReduceTaskArgs{worker_index}
+func WaitForReduceTask(worker_index int, first_reduce_task bool) (bool, int) {
+	args := WorkerWaitForReduceTaskArgs{worker_index, first_reduce_task}
 	reply := WorkerWaitForReduceTaskReply{}
 
 	for {
@@ -235,12 +248,22 @@ func WaitForReduceTask(worker_index int) {
 		ok := call("Coordinator.WorkerStartReduceTask", &args, &reply)
 		if !ok {
 			fmt.Printf("Worker wait for reduce task failed!\n")
+			return true, 0
 		}
 		if reply.StartReduceTask {
-			break
+			return reply.NoReduceTaskLeft, reply.NewReduceTaskNumber
 		}
 	}
-	return
+}
+
+func IndicateReduceTaskCompletion(reduce_index int) {
+	args := ReduceCompletionArgs{reduce_index}
+	reply := ReduceCompletionReply{}
+
+	ok := call("Coordinator.ReduceCompletion", &args, &reply)
+	if !ok {
+		fmt.Printf("Worker indicates Reduce completion failed!\n")
+	}
 }
 
 // send an RPC request to the coordinator, wait for the response.

@@ -18,6 +18,7 @@ type Coordinator struct {
 	AssignedFileIndexesFromWorkerIndex Mutexed2DString
 
 	WorkerMapTaskCompletionStatus MutexedBoolSlice
+	ReduceCompletionStatus        MutexedBoolSlice
 }
 
 type MutexedInt struct {
@@ -119,10 +120,30 @@ func (c *Coordinator) WorkerMapTaskCompletion(args *WorkerMapTaskCompletionArgs,
 // RPC handler that indicates that a worker can start Reduce task
 func (c *Coordinator) WorkerStartReduceTask(args *WorkerWaitForReduceTaskArgs, reply *WorkerWaitForReduceTaskReply) error {
 	if c.WorkerMapTaskCompletionStatus.AllTrue {
+		// TODO: distribute Reduce task
+		if args.WaitingForFirstReduceTask {
+			reply.StartReduceTask = true
+			reply.NewReduceTaskNumber = args.WorkerNumber
+			reply.NoReduceTaskLeft = false
+			return nil
+		}
+		if c.ReduceCompletionStatus.AllTrue {
+			reply.NoReduceTaskLeft = true
+			return nil
+		}
+		// TODO: pause to wait if necessary
+		// TODO: distribute reduce tasks
 		reply.StartReduceTask = true
+		reply.NewReduceTaskNumber = args.WorkerNumber
 	} else {
 		reply.StartReduceTask = false
 	}
+	return nil
+}
+
+func (c *Coordinator) ReduceCompletion(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
+	c.ReduceCompletionStatus.SetIndexTrue(args.WorkerNumber)
+	// TODO: use WorkerCompletionReply to let Worker take over other Reduce tasks
 	return nil
 }
 
@@ -143,21 +164,19 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
-
-	// Your code here.
-
-	return ret
+	// TODO: detect completion status passed to all workers
+	return c.ReduceCompletionStatus.AllTrue
 }
 
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{nReduce, files, MutexedInt{Index: 0}, MutexedInt{Index: 0}, Mutexed2DString{Map: make([][]string, nReduce)}, MutexedBoolSlice{BoolSlice: make([]bool, nReduce), AllTrue: false}}
+	c := Coordinator{nReduce, files, MutexedInt{Index: 0}, MutexedInt{Index: 0}, Mutexed2DString{Map: make([][]string, nReduce)}, MutexedBoolSlice{BoolSlice: make([]bool, nReduce), AllTrue: false}, MutexedBoolSlice{BoolSlice: make([]bool, nReduce), AllTrue: false}}
 
 	for i := 0; i < nReduce; i++ {
 		c.WorkerMapTaskCompletionStatus.BoolSlice[i] = false
+		c.ReduceCompletionStatus.BoolSlice[i] = false
 	}
 
 	c.server()

@@ -46,10 +46,19 @@ type WorkerMapTaskCompletionArgs struct {
 type WorkerMapTaskCompletionReply struct{}
 
 type WorkerWaitForReduceTaskArgs struct {
-	WorkerNumber int
+	WorkerNumber              int
+	WaitingForFirstReduceTask bool
 }
 type WorkerWaitForReduceTaskReply struct {
-	StartReduceTask bool
+	StartReduceTask     bool
+	NewReduceTaskNumber int
+	NoReduceTaskLeft    bool
+}
+
+type ReduceCompletionArgs struct {
+	WorkerNumber int
+}
+type ReduceCompletionReply struct {
 }
 
 // Add your RPC definitions here.
