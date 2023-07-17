@@ -88,7 +88,7 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 // RPC handler that initialize a worker
 func (c *Coordinator) InitializeWorker(args *InitializeWorkerArgs, reply *InitializeWorkerReply) error {
 	var worker_index int = c.PendingWorkerIndexToAllocate.GetAndIncrementIndex()
-	reply.nReduce = c.nReduce
+	reply.NReduce = c.nReduce
 	reply.WorkerNumber = worker_index
 	if worker_index >= c.nReduce {
 		log.Fatalf("Allocated too much worker threads")
@@ -171,14 +171,22 @@ func (c *Coordinator) Done() bool {
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
-func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{nReduce, files, MutexedInt{Index: 0}, MutexedInt{Index: 0}, Mutexed2DString{Map: make([][]string, nReduce)}, MutexedBoolSlice{BoolSlice: make([]bool, nReduce), AllTrue: false}, MutexedBoolSlice{BoolSlice: make([]bool, nReduce), AllTrue: false}}
+func MakeCoordinator(files []string, n_reduce int) *Coordinator {
+	c := &Coordinator{
+		nReduce:                            n_reduce,
+		Files:                              files,
+		PendingWorkerIndexToAllocate:       MutexedInt{Index: 0},
+		PendingReadFilesIndex:              MutexedInt{Index: 0},
+		AssignedFileIndexesFromWorkerIndex: Mutexed2DString{Map: make([][]string, n_reduce)},
+		WorkerMapTaskCompletionStatus:      MutexedBoolSlice{BoolSlice: make([]bool, n_reduce), AllTrue: false},
+		ReduceCompletionStatus:             MutexedBoolSlice{BoolSlice: make([]bool, n_reduce), AllTrue: false},
+	}
 
-	for i := 0; i < nReduce; i++ {
+	for i := 0; i < n_reduce; i++ {
 		c.WorkerMapTaskCompletionStatus.BoolSlice[i] = false
 		c.ReduceCompletionStatus.BoolSlice[i] = false
 	}
 
 	c.server()
-	return &c
+	return c
 }

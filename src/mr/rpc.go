@@ -27,7 +27,7 @@ type ExampleReply struct {
 // RPC arguments to initialize a worker
 type InitializeWorkerArgs struct{}
 type InitializeWorkerReply struct {
-	nReduce      int
+	NReduce      int
 	WorkerNumber int
 }
 

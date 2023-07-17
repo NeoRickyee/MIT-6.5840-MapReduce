@@ -38,6 +38,7 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+
 	var nReduce int = 0
 	var worker_index int
 	nReduce, worker_index = Initialize()
@@ -195,9 +196,10 @@ func CallExample() {
 	ok := call("Coordinator.Example", &args, &reply)
 	if ok {
 		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
+		//fmt.Printf("reply.Y %v\n", reply.Y)
+		log.Fatalf("reply.Y %v\n", reply.Y)
 	} else {
-		fmt.Printf("call failed!\n")
+		log.Fatalf("call failed!\n")
 	}
 }
 
@@ -208,7 +210,8 @@ func Initialize() (int, int) {
 
 	ok := call("Coordinator.InitializeWorker", &args, &reply)
 	if ok {
-		return reply.nReduce, reply.WorkerNumber
+		// fmt.Printf("reply.NReduce value is %v, reply.WorkerNumber is %v.\n", reply.NReduce, reply.WorkerNumber)
+		return reply.NReduce, reply.WorkerNumber
 	} else {
 		fmt.Printf("Worker initialization failed!\n")
 	}
