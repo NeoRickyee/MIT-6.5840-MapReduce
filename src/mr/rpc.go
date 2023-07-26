@@ -27,8 +27,9 @@ type ExampleReply struct {
 // RPC arguments to initialize a worker
 type InitializeWorkerArgs struct{}
 type InitializeWorkerReply struct {
-	NReduce      int
-	WorkerNumber int
+	NReduce         int
+	WorkerNumber    int
+	TerminateWorker bool
 }
 
 // RPC arguments to get the next file name to handle
@@ -38,6 +39,7 @@ type GetNextFileNameToHandleArgs struct {
 type GetNextFileNameToHandleReply struct {
 	FileName         string
 	WaitForNextStage bool
+	TerminateWorker  bool
 }
 
 type WorkerMapTaskCompletionArgs struct {

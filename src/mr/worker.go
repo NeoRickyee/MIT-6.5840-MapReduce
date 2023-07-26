@@ -41,13 +41,18 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	var nReduce int = 0
 	var worker_index int
-	nReduce, worker_index = Initialize()
+	var initialization_successful bool
+	nReduce, worker_index, initialization_successful = Initialize()
+	if !initialization_successful {
+		return
+	}
 	if nReduce == 0 {
 		log.Fatalf("nReduce value is 0")
 		return
-		// TODO: use the function that informs coordinator for termination
 	}
 	intermediate := []KeyValue{}
+
+	// create a loop starts here, to catch crashing worker
 
 	for {
 		file_name, wait_for_next_stage := FetchFileNameToMap(worker_index)
@@ -59,6 +64,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	sort.Sort(ByKey(intermediate))
 	StoreIntermediateToDisk(intermediate, nReduce, worker_index)
 	IndicateMapTaskCompletion(worker_index)
+
+	// create a loop ends here, to catch crashing worker
 
 	var first_reduce_task bool = true
 	for {
@@ -203,19 +210,19 @@ func CallExample() {
 	}
 }
 
-// Return nReduce, WorkerNumber
-func Initialize() (int, int) {
+// Return nReduce, WorkerNumber, Initilization successful
+func Initialize() (int, int, bool) {
 	args := InitializeWorkerArgs{}
 	reply := InitializeWorkerReply{}
 
 	ok := call("Coordinator.InitializeWorker", &args, &reply)
 	if ok {
 		// fmt.Printf("reply.NReduce value is %v, reply.WorkerNumber is %v.\n", reply.NReduce, reply.WorkerNumber)
-		return reply.NReduce, reply.WorkerNumber
+		return reply.NReduce, reply.WorkerNumber, !reply.TerminateWorker
 	} else {
 		fmt.Printf("Worker initialization failed!\n")
 	}
-	return 0, 1
+	return 0, 1, false
 }
 
 func FetchFileNameToMap(worker_index int) (string, bool) {
@@ -234,7 +241,7 @@ func FetchFileNameToMap(worker_index int) (string, bool) {
 func IndicateMapTaskCompletion(worker_index int) {
 	args := WorkerMapTaskCompletionArgs{worker_index}
 	reply := WorkerMapTaskCompletionReply{}
-
+	fmt.Println("Map Task Complete for worker number", worker_index)
 	ok := call("Coordinator.WorkerMapTaskCompletion", &args, &reply)
 	if !ok {
 		fmt.Printf("Worker indicates Map task completion failed!\n")
