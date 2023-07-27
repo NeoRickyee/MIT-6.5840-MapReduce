@@ -5,19 +5,19 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
-	"now"
 	"os"
 	"sync"
+	"time"
 )
 
 type Coordinator struct {
-	nReduce                 int
-	Files                   []string
-	WorkerActivityRecorder  ActivityRecorder
-	MapTaskDistributor      WorkIndexDistributor
-	MapTaskCompletionStatus MutexedBoolSlice
-	ReduceDistributor       WorkIndexDistributor
-	ReduceCompletionStatus  MutexedBoolSlice
+	nReduce                int
+	Files                  []string
+	WorkerActivityRecorder ActivityRecorder
+	MapTaskDistributor     WorkIndexDistributor
+	//MapTaskCompletionStatus MutexedBoolSlice
+	ReduceDistributor WorkIndexDistributor
+	//ReduceCompletionStatus  MutexedBoolSlice
 }
 
 type ActivityRecorder struct {
@@ -39,19 +39,19 @@ func (recorder *ActivityRecorder) InitializeActivityRecorder(nReduce int) {
 }
 
 func (recorder *ActivityRecorder) RecordCurrentCommTime(worker_index int) bool {
-	var current_seconds int64 = now.Unix()
+	var current_seconds int64 = time.Now().Unix()
 	if (current_seconds - recorder.LastCommTime[worker_index]) > 10 {
 		// current worker thread is possible to be declared dead
 		// No longer accepting tasks
 		return false
 	} else {
-		recorder.LastCommTime[worker_index] = now.Unix()
+		recorder.LastCommTime[worker_index] = time.Now().Unix()
 		return true
 	}
 }
 
 func (recorder *ActivityRecorder) GetNewDeadThreads(nReduce int) *[]int {
-	var current_seconds int64 = now.Unix()
+	var current_seconds int64 = time.Now().Unix()
 	var all_dead_threads []int
 	for i := 0; i < nReduce; i++ {
 		if (current_seconds - recorder.LastCommTime[i]) > 10 {
@@ -85,7 +85,7 @@ func (recorder *ActivityRecorder) GetNewWorkerIndex(nReduce int) (int, bool) {
 	recorder.NextIndexToAllocate++
 	recorder.MuIndexToAllocate.Unlock()
 
-	recorder.LastCommTime[allocated_worker_index] = now.UNIX()
+	recorder.LastCommTime[allocated_worker_index] = time.Now().Unix()
 	recorder.ThreadAliveStatus[allocated_worker_index] = true
 	return allocated_worker_index, true
 }
@@ -97,12 +97,16 @@ type WorkIndexDistributor struct {
 	AllRemainingWork      []int
 	WorksAssignedToWorker [][]int
 	MuToRetrieveWork      sync.Mutex
+	WorkCompleted         []bool
+	MuWorkCompleted       sync.Mutex
 }
 
 func (distributor *WorkIndexDistributor) InitializeWorkDistributor(nReduce int, total_work_amount int) {
 	distributor.AllRemainingWork = make([]int, total_work_amount)
+	distributor.WorkCompleted = make([]bool, total_work_amount)
 	for i := 0; i < total_work_amount; i++ {
 		distributor.AllRemainingWork[i] = i
+		distributor.WorkCompleted[i] = false
 	}
 	distributor.WorksAssignedToWorker = make([][]int, nReduce)
 }
@@ -110,8 +114,19 @@ func (distributor *WorkIndexDistributor) InitializeWorkDistributor(nReduce int, 
 func (distributor *WorkIndexDistributor) WorkerDeathProcessing(dead_worker_index int) {
 	distributor.MuToRetrieveWork.Lock()
 	defer distributor.MuToRetrieveWork.Unlock()
-	works_assigned_to_dead_worker := distributor.WorksAssignedToWorker[dead_worker_index]
-	distributor.AllRemainingWork = append(distributor.AllRemainingWork, works_assigned_to_dead_worker...)
+	var last_work_assigned_to_dead_worker int
+	total_work_assigned_to_dead_worker := len(distributor.WorksAssignedToWorker[dead_worker_index])
+	if total_work_assigned_to_dead_worker == 0 {
+		return
+	}
+	last_work_assigned_to_dead_worker = distributor.WorksAssignedToWorker[dead_worker_index][total_work_assigned_to_dead_worker-1]
+	distributor.MuWorkCompleted.Lock()
+	if distributor.WorkCompleted[last_work_assigned_to_dead_worker] {
+		return
+	}
+	distributor.MuWorkCompleted.Unlock()
+
+	distributor.AllRemainingWork = append(distributor.AllRemainingWork, last_work_assigned_to_dead_worker)
 	distributor.WorksAssignedToWorker[dead_worker_index] = nil
 }
 
@@ -127,33 +142,39 @@ func (distributor *WorkIndexDistributor) GetWork(worker_index int) (int, bool) {
 	return work_to_distribute, false
 }
 
-type MutexedBoolSlice struct {
-	Mu        sync.Mutex
-	BoolSlice []bool
-	AllTrue   bool
+func (distributor *WorkIndexDistributor) SetWorkComplete(work_index int) {
+	distributor.MuWorkCompleted.Lock()
+	defer distributor.MuWorkCompleted.Unlock()
+	distributor.WorkCompleted[work_index] = true
 }
 
-func (bool_slice *MutexedBoolSlice) Initialize(nReduce int) {
-	bool_slice.BoolSlice = make([]bool, nReduce)
-	for i := 0; i < nReduce; i++ {
-		bool_slice.BoolSlice[i] = false
-	}
-	bool_slice.AllTrue = false
-}
-
-func (bool_slice *MutexedBoolSlice) SetIndexTrue(index int) {
-	// bool_slice.Mu.Lock()
-	bool_slice.BoolSlice[index] = true
-	// bool_slice.Mu.Unlock()
-	for _, value := range bool_slice.BoolSlice {
-		if !value {
-			return
+func (distributor *WorkIndexDistributor) AllWorkComplete() bool {
+	distributor.MuWorkCompleted.Lock()
+	for _, val := range distributor.WorkCompleted {
+		if !val {
+			return false
 		}
 	}
-	bool_slice.AllTrue = true
+	distributor.MuWorkCompleted.Unlock()
+	return true
 }
 
-// return Index, If no more file left, worker is already dead
+func (c *Coordinator) GetListOfFileNamesForEachWorkerIndex(worker_index int) []string {
+	total_file_count := len(c.Files)
+	var each_worker_file_count int = (total_file_count + c.nReduce - 1) / c.nReduce
+	var starting_index int = worker_index * each_worker_file_count
+	if starting_index >= total_file_count {
+		log.Fatal("starting index larger than total length")
+	}
+	var ending_index int = starting_index + total_file_count
+	if ending_index > total_file_count {
+		ending_index = total_file_count
+	}
+	var distributed_file_names []string = c.Files[starting_index:ending_index]
+	return distributed_file_names
+}
+
+// return: Index, If no more file left, worker is already dead
 func (c *Coordinator) GetNextTaskIndex(activity_recorder *ActivityRecorder, task_distributor *WorkIndexDistributor, worker_index int) (int, bool, bool) {
 	var worker_declared_dead bool = activity_recorder.RecordCurrentCommTime(worker_index)
 	if worker_declared_dead {
@@ -173,8 +194,6 @@ func (c *Coordinator) GetNextTaskIndex(activity_recorder *ActivityRecorder, task
 	return task_index, true, false
 }
 
-func (c *Coordinator) AllThreadsCompleteCurrentTask(activity_recorder *ActivityRecorder)
-
 // Your code here -- RPC handlers for the worker to call.
 
 // an example RPC handler.
@@ -190,6 +209,7 @@ func (c *Coordinator) InitializeWorker(args *InitializeWorkerArgs, reply *Initia
 	worker_index, allocation_successful := c.WorkerActivityRecorder.GetNewWorkerIndex(c.nReduce)
 	if !allocation_successful {
 		reply.TerminateWorker = true
+		return nil
 	}
 	reply.TerminateWorker = false
 	reply.NReduce = c.nReduce
@@ -199,55 +219,74 @@ func (c *Coordinator) InitializeWorker(args *InitializeWorkerArgs, reply *Initia
 
 // RPC handler that replies the name of a file that will be handled by
 // the worker thread
-func (c *Coordinator) NextFileNameToHandle(args *GetNextFileNameToHandleArgs, reply *GetNextFileNameToHandleReply) error {
+func (c *Coordinator) NextFileNamesToHandle(args *GetNextFileNamesToHandleArgs, reply *GetNextFileNamesToHandleReply) error {
 	worker_index := args.WorkerNumber
 	map_task_index, no_map_task_left, worker_has_been_dead := c.GetNextTaskIndex(&c.WorkerActivityRecorder, &c.MapTaskDistributor, worker_index)
 	if worker_has_been_dead {
 		reply.TerminateWorker = true
+		return nil
 	}
 	reply.TerminateWorker = false
 	if no_map_task_left {
-		reply.WaitForNextStage = true
+		if c.MapTaskDistributor.AllWorkComplete() {
+			reply.StartReduceTask = true
+			reply.WaitForTask = false
+		} else {
+			reply.WaitForTask = true
+			reply.StartReduceTask = false
+		}
+		return nil
 	}
-	reply.WaitForNextStage = false
-	file_name := c.Files[map_task_index]
-	reply.FileName = file_name
+	reply.WaitForTask = false
+	reply.StartReduceTask = false
+	distributed_file_names := c.GetListOfFileNamesForEachWorkerIndex(map_task_index)
+	reply.FileNames = distributed_file_names
+	reply.MapTaskIndex = map_task_index
 	return nil
 }
 
 // RPC handler that indicates that a worker has completed its Map task
 func (c *Coordinator) WorkerMapTaskCompletion(args *WorkerMapTaskCompletionArgs, reply *WorkerMapTaskCompletionReply) error {
-	c.MapTaskCompletionStatus.SetIndexTrue(args.WorkerNumber)
+	var worker_declared_dead bool = c.WorkerActivityRecorder.RecordCurrentCommTime(args.WorkerNumber)
+	if worker_declared_dead {
+		reply.TerminateWorker = true
+		return nil
+	}
+	reply.TerminateWorker = false
+	c.MapTaskDistributor.SetWorkComplete(args.MapTaskIndex)
 	return nil
 }
 
-// RPC handler that indicates that a worker can start Reduce task
-func (c *Coordinator) WorkerStartReduceTask(args *WorkerWaitForReduceTaskArgs, reply *WorkerWaitForReduceTaskReply) error {
-	if c.MapTaskCompletionStatus.AllTrue {
-		// TODO: distribute Reduce task
-		if args.WaitingForFirstReduceTask {
-			reply.StartReduceTask = true
-			reply.NewReduceTaskNumber = args.WorkerNumber
-			reply.NoReduceTaskLeft = false
-			return nil
-		}
-		if c.ReduceCompletionStatus.AllTrue {
-			reply.NoReduceTaskLeft = true
-			return nil
-		}
-		// TODO: pause to wait if necessary
-		// TODO: distribute reduce tasks
-		reply.StartReduceTask = true
-		reply.NewReduceTaskNumber = args.WorkerNumber
-	} else {
-		reply.StartReduceTask = false
+func (c *Coordinator) NextReduceTaskToStart(arg *GetNextReduceTaskArgs, reply *GetNextReduceTaskReply) error {
+	worker_index := arg.WorkerNumber
+	reduce_task_index, no_reduce_task_left, worker_has_been_dead := c.GetNextTaskIndex(&c.WorkerActivityRecorder, &c.ReduceDistributor, worker_index)
+	if worker_has_been_dead {
+		reply.TerminateWorker = true
+		return nil
 	}
+	reply.TerminateWorker = false
+	if no_reduce_task_left {
+		if c.ReduceDistributor.AllWorkComplete() {
+			reply.TerminateWorker = true
+			reply.WaitForTask = false
+		} else {
+			reply.WaitForTask = true
+		}
+		return nil
+	}
+	reply.WaitForTask = false
+	reply.ReduceTaskIndex = reduce_task_index
 	return nil
 }
 
 func (c *Coordinator) ReduceCompletion(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
-	c.ReduceCompletionStatus.SetIndexTrue(args.WorkerNumber)
-	// TODO: use WorkerCompletionReply to let Worker take over other Reduce tasks
+	var worker_declared_dead bool = c.WorkerActivityRecorder.RecordCurrentCommTime(args.WorkerNumber)
+	if worker_declared_dead {
+		reply.TerminateWorker = true
+		return nil
+	}
+	reply.TerminateWorker = false
+	c.ReduceDistributor.SetWorkComplete(args.ReduceTaskIndex)
 	return nil
 }
 
@@ -268,8 +307,7 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	// TODO: detect completion status passed to all workers
-	return c.ReduceCompletionStatus.AllTrue
+	return c.ReduceDistributor.AllWorkComplete()
 }
 
 // create a Coordinator.
@@ -277,19 +315,14 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, n_reduce int) *Coordinator {
 	c := &Coordinator{
-		nReduce:                            n_reduce,
-		Files:                              files,
-		PendingWorkerIndexToAllocate:       MutexedInt{Index: 0},
-		PendingReadFilesIndex:              MutexedInt{Index: 0},
-		AssignedFileIndexesFromWorkerIndex: Mutexed2DString{Map: make([][]string, n_reduce)},
-		WorkerMapTaskCompletionStatus:      MutexedBoolSlice{BoolSlice: make([]bool, n_reduce), AllTrue: false},
-		ReduceCompletionStatus:             MutexedBoolSlice{BoolSlice: make([]bool, n_reduce), AllTrue: false},
+		nReduce: n_reduce,
+		Files:   files,
 	}
-
-	for i := 0; i < n_reduce; i++ {
-		c.WorkerMapTaskCompletionStatus.BoolSlice[i] = false
-		c.ReduceCompletionStatus.BoolSlice[i] = false
-	}
+	c.WorkerActivityRecorder.InitializeActivityRecorder(n_reduce)
+	c.MapTaskDistributor.InitializeWorkDistributor(n_reduce, n_reduce)
+	//c.MapTaskCompletionStatus.Initialize(n_reduce)
+	c.ReduceDistributor.InitializeWorkDistributor(n_reduce, n_reduce)
+	//c.ReduceCompletionStatus.Initialize(n_reduce)
 
 	c.server()
 	return c

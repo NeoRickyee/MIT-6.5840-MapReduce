@@ -33,34 +33,40 @@ type InitializeWorkerReply struct {
 }
 
 // RPC arguments to get the next file name to handle
-type GetNextFileNameToHandleArgs struct {
+type GetNextFileNamesToHandleArgs struct {
 	WorkerNumber int
 }
-type GetNextFileNameToHandleReply struct {
-	FileName         string
-	WaitForNextStage bool
-	TerminateWorker  bool
+type GetNextFileNamesToHandleReply struct {
+	FileNames       []string
+	MapTaskIndex    int
+	WaitForTask     bool
+	StartReduceTask bool
+	TerminateWorker bool
 }
 
 type WorkerMapTaskCompletionArgs struct {
 	WorkerNumber int
+	MapTaskIndex int
 }
-type WorkerMapTaskCompletionReply struct{}
+type WorkerMapTaskCompletionReply struct {
+	TerminateWorker bool
+}
 
-type WorkerWaitForReduceTaskArgs struct {
-	WorkerNumber              int
-	WaitingForFirstReduceTask bool
+type GetNextReduceTaskArgs struct {
+	WorkerNumber int
 }
-type WorkerWaitForReduceTaskReply struct {
-	StartReduceTask     bool
-	NewReduceTaskNumber int
-	NoReduceTaskLeft    bool
+type GetNextReduceTaskReply struct {
+	ReduceTaskIndex int
+	WaitForTask     bool
+	TerminateWorker bool
 }
 
 type ReduceCompletionArgs struct {
-	WorkerNumber int
+	WorkerNumber    int
+	ReduceTaskIndex int
 }
 type ReduceCompletionReply struct {
+	TerminateWorker bool
 }
 
 // Add your RPC definitions here.
