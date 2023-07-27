@@ -50,42 +50,59 @@ func Worker(mapf func(string, string) []KeyValue,
 		log.Fatalf("nReduce value is 0")
 		return
 	}
-	intermediate := []KeyValue{}
 
 	// create a loop starts here, to catch crashing worker
 
 	for {
-		file_name, wait_for_next_stage := FetchFileNameToMap(worker_index)
-		if wait_for_next_stage {
+		intermediate := []KeyValue{}
+		var file_names []string
+		var map_task_index int
+		var wait_for_task, go_to_reduce, terminate_worker bool
+		for {
+			file_names, map_task_index, wait_for_task, go_to_reduce, terminate_worker = FetchFileNamesToMap(worker_index)
+			if terminate_worker {
+				return
+			}
+			if !wait_for_task || go_to_reduce {
+				break
+			}
+			time.Sleep(1 * time.Second) // Sleep for 1 second
+		}
+		if go_to_reduce {
 			break
 		}
-		WorkerMapTask(mapf, file_name, &intermediate)
-	}
-	sort.Sort(ByKey(intermediate))
-	StoreIntermediateToDisk(intermediate, nReduce, worker_index)
-	IndicateMapTaskCompletion(worker_index)
 
-	// create a loop ends here, to catch crashing worker
-
-	var first_reduce_task bool = true
-	for {
-		terminate_worker, reduce_index := WaitForReduceTask(worker_index, first_reduce_task)
+		for _, file_name := range file_names {
+			WorkerMapTask(mapf, file_name, &intermediate)
+		}
+		sort.Sort(ByKey(intermediate))
+		StoreIntermediateToDisk(intermediate, nReduce, map_task_index)
+		terminate_worker = IndicateMapTaskCompletion(worker_index, map_task_index)
 		if terminate_worker {
 			return
 		}
-		// Permission to start Reduce task is received, start reduce task
-		WorkerReduceTask(reducef, reduce_index, nReduce)
-		first_reduce_task = false
-		// TODO: remove this when have ability to distribute Reduce task
-		IndicateReduceTaskCompletion(reduce_index)
-		time.Sleep(1 * time.Second)
-		break
 	}
 
-	// TODO: think about the case where this Worker needs to take over another Reduce task
-
-	// TODO: indicate to Coordinator that this Worker is Done
-
+	// create a loop ends here, to catch crashing worker
+	for {
+		var reduce_task_index int
+		var wait_for_task, terminate_worker bool
+		for {
+			reduce_task_index, wait_for_task, terminate_worker = FetchReduceTaskIndex(worker_index)
+			if terminate_worker {
+				return
+			}
+			if !wait_for_task {
+				break
+			}
+			time.Sleep(1 * time.Second) // Sleep for 1 second
+		}
+		WorkerReduceTask(reducef, reduce_task_index, nReduce)
+		terminate_worker = IndicateReduceTaskCompletion(worker_index, reduce_task_index)
+		if terminate_worker {
+			return
+		}
+	}
 }
 
 func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, intermediate *[]KeyValue) {
@@ -225,54 +242,56 @@ func Initialize() (int, int, bool) {
 	return 0, 1, false
 }
 
-func FetchFileNameToMap(worker_index int) (string, bool) {
-	args := GetNextFileNameToHandleArgs{worker_index}
-	reply := GetNextFileNameToHandleReply{}
+// return: file_names, work_index, wait_for_task, go_to_reduce, terminate_worker
+func FetchFileNamesToMap(worker_index int) ([]string, int, bool, bool, bool) {
+	args := GetNextFileNamesToHandleArgs{worker_index}
+	reply := GetNextFileNamesToHandleReply{}
 
 	ok := call("Coordinator.NextFileNameToHandle", &args, &reply)
 	if ok {
-		return reply.FileName, reply.WaitForNextStage
+		return reply.FileNames, reply.MapTaskIndex, reply.WaitForTask, reply.StartReduceTask, reply.TerminateWorker
 	} else {
 		fmt.Printf("Worker fetch Map file name failed!\n")
 	}
-	return "", false
+	return []string{}, 0, false, false, true
 }
 
-func IndicateMapTaskCompletion(worker_index int) {
-	args := WorkerMapTaskCompletionArgs{worker_index}
+// return: terminate_worker
+func IndicateMapTaskCompletion(worker_index int, map_task_index int) bool {
+	args := WorkerMapTaskCompletionArgs{worker_index, map_task_index}
 	reply := WorkerMapTaskCompletionReply{}
-	fmt.Println("Map Task Complete for worker number", worker_index)
+	// fmt.Println("Map Task Complete for worker number:", worker_index)
 	ok := call("Coordinator.WorkerMapTaskCompletion", &args, &reply)
 	if !ok {
 		fmt.Printf("Worker indicates Map task completion failed!\n")
 	}
-	return
+	return reply.TerminateWorker
 }
 
-func WaitForReduceTask(worker_index int, first_reduce_task bool) (bool, int) {
-	args := WorkerWaitForReduceTaskArgs{worker_index, first_reduce_task}
-	reply := WorkerWaitForReduceTaskReply{}
+// return: reduce_task_index, wait_for_task, terminate_worker
+func FetchReduceTaskIndex(worker_index int) (int, bool, bool) {
+	args := GetNextReduceTaskArgs{worker_index}
+	reply := GetNextFileNamesToHandleReply{}
 
-	for {
-		time.Sleep(1 * time.Second) // Sleep for 1 second
-		ok := call("Coordinator.WorkerStartReduceTask", &args, &reply)
-		if !ok {
-			fmt.Printf("Worker wait for reduce task failed!\n")
-			return true, 0
-		}
-		if reply.StartReduceTask {
-			return reply.NoReduceTaskLeft, reply.NewReduceTaskNumber
-		}
+	ok := call("Coordinator.NextReduceTaskToStart", &args, &reply)
+	if ok {
+		return reply.MapTaskIndex, reply.WaitForTask, reply.TerminateWorker
+	} else {
+		fmt.Printf("Worker Reduce task start failed!\n")
 	}
+	return 0, false, true
 }
 
-func IndicateReduceTaskCompletion(reduce_index int) {
-	args := ReduceCompletionArgs{reduce_index}
+func IndicateReduceTaskCompletion(worker_index int, reduce_task_index int) bool {
+	args := ReduceCompletionArgs{worker_index, reduce_task_index}
 	reply := ReduceCompletionReply{}
 
 	ok := call("Coordinator.ReduceCompletion", &args, &reply)
-	if !ok {
+	if ok {
+		return reply.TerminateWorker
+	} else {
 		fmt.Printf("Worker indicates Reduce completion failed!\n")
+		return true
 	}
 }
 
