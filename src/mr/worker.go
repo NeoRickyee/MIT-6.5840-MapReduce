@@ -36,8 +36,7 @@ func ihash(key string) int {
 }
 
 // main/mrworker.go calls this function.
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 
 	var nReduce int = 0
 	var worker_index int
@@ -50,9 +49,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		log.Fatalf("nReduce value is 0")
 		return
 	}
-
-	// create a loop starts here, to catch crashing worker
-
+	// fmt.Printf("reply.NReduce value is %v, reply.WorkerNumber is %v.\n", reply.NReduce, reply.WorkerNumber)
 	for {
 		intermediate := []KeyValue{}
 		var file_names []string
@@ -60,6 +57,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		var wait_for_task, go_to_reduce, terminate_worker bool
 		for {
 			file_names, map_task_index, wait_for_task, go_to_reduce, terminate_worker = FetchFileNamesToMap(worker_index)
+			//fmt.Printf("Worker %v fetched file names. map_task_index = %v, wait_for_task = %v, go_to_reduce = %v, terminate_worker = %v\n", worker_index, map_task_index, wait_for_task, go_to_reduce, terminate_worker)
 			if terminate_worker {
 				return
 			}
@@ -72,6 +70,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			break
 		}
 
+		//fmt.Printf("Worker %v got Map task number %v.\n", worker_index, map_task_index)
 		for _, file_name := range file_names {
 			WorkerMapTask(mapf, file_name, &intermediate)
 		}
@@ -83,12 +82,13 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 	}
 
-	// create a loop ends here, to catch crashing worker
 	for {
 		var reduce_task_index int
 		var wait_for_task, terminate_worker bool
 		for {
 			reduce_task_index, wait_for_task, terminate_worker = FetchReduceTaskIndex(worker_index)
+			//fmt.Printf("Worker %v fetched Reduce task. reduce_task_index = %v, wait_for_task = %v, terminate_worker = %v\n", worker_index, reduce_task_index, wait_for_task, terminate_worker)
+
 			if terminate_worker {
 				return
 			}
@@ -111,8 +111,6 @@ func WorkerMapTask(mapf func(string, string) []KeyValue, file_name string, inter
 		log.Fatalf("Map task started but input file name is empty")
 		return
 	}
-
-	// fmt.Printf("Fetched Map file name: %s, Total threads: %v\n", file_name, nReduce)
 
 	file, err := os.Open(file_name)
 	if err != nil {
@@ -234,7 +232,6 @@ func Initialize() (int, int, bool) {
 
 	ok := call("Coordinator.InitializeWorker", &args, &reply)
 	if ok {
-		// fmt.Printf("reply.NReduce value is %v, reply.WorkerNumber is %v.\n", reply.NReduce, reply.WorkerNumber)
 		return reply.NReduce, reply.WorkerNumber, !reply.TerminateWorker
 	} else {
 		fmt.Printf("Worker initialization failed!\n")
@@ -247,7 +244,7 @@ func FetchFileNamesToMap(worker_index int) ([]string, int, bool, bool, bool) {
 	args := GetNextFileNamesToHandleArgs{worker_index}
 	reply := GetNextFileNamesToHandleReply{}
 
-	ok := call("Coordinator.NextFileNameToHandle", &args, &reply)
+	ok := call("Coordinator.NextFileNamesToHandle", &args, &reply)
 	if ok {
 		return reply.FileNames, reply.MapTaskIndex, reply.WaitForTask, reply.StartReduceTask, reply.TerminateWorker
 	} else {
@@ -271,11 +268,11 @@ func IndicateMapTaskCompletion(worker_index int, map_task_index int) bool {
 // return: reduce_task_index, wait_for_task, terminate_worker
 func FetchReduceTaskIndex(worker_index int) (int, bool, bool) {
 	args := GetNextReduceTaskArgs{worker_index}
-	reply := GetNextFileNamesToHandleReply{}
+	reply := GetNextReduceTaskReply{}
 
 	ok := call("Coordinator.NextReduceTaskToStart", &args, &reply)
 	if ok {
-		return reply.MapTaskIndex, reply.WaitForTask, reply.TerminateWorker
+		return reply.ReduceTaskIndex, reply.WaitForTask, reply.TerminateWorker
 	} else {
 		fmt.Printf("Worker Reduce task start failed!\n")
 	}

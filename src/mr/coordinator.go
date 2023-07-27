@@ -15,9 +15,7 @@ type Coordinator struct {
 	Files                  []string
 	WorkerActivityRecorder ActivityRecorder
 	MapTaskDistributor     WorkIndexDistributor
-	//MapTaskCompletionStatus MutexedBoolSlice
-	ReduceDistributor WorkIndexDistributor
-	//ReduceCompletionStatus  MutexedBoolSlice
+	ReduceDistributor      WorkIndexDistributor
 }
 
 type ActivityRecorder struct {
@@ -43,10 +41,10 @@ func (recorder *ActivityRecorder) RecordCurrentCommTime(worker_index int) bool {
 	if (current_seconds - recorder.LastCommTime[worker_index]) > 10 {
 		// current worker thread is possible to be declared dead
 		// No longer accepting tasks
-		return false
+		return true
 	} else {
 		recorder.LastCommTime[worker_index] = time.Now().Unix()
-		return true
+		return false
 	}
 }
 
@@ -163,10 +161,11 @@ func (c *Coordinator) GetListOfFileNamesForEachWorkerIndex(worker_index int) []s
 	total_file_count := len(c.Files)
 	var each_worker_file_count int = (total_file_count + c.nReduce - 1) / c.nReduce
 	var starting_index int = worker_index * each_worker_file_count
+	var ending_index int = starting_index + each_worker_file_count
+
 	if starting_index >= total_file_count {
-		log.Fatal("starting index larger than total length")
+		return []string{}
 	}
-	var ending_index int = starting_index + total_file_count
 	if ending_index > total_file_count {
 		ending_index = total_file_count
 	}
@@ -178,7 +177,7 @@ func (c *Coordinator) GetListOfFileNamesForEachWorkerIndex(worker_index int) []s
 func (c *Coordinator) GetNextTaskIndex(activity_recorder *ActivityRecorder, task_distributor *WorkIndexDistributor, worker_index int) (int, bool, bool) {
 	var worker_declared_dead bool = activity_recorder.RecordCurrentCommTime(worker_index)
 	if worker_declared_dead {
-		return -1, true, true
+		return -1, false, true
 	}
 	task_index, no_remaining_task := task_distributor.GetWork(worker_index)
 	if !no_remaining_task {
@@ -223,9 +222,11 @@ func (c *Coordinator) NextFileNamesToHandle(args *GetNextFileNamesToHandleArgs, 
 	worker_index := args.WorkerNumber
 	map_task_index, no_map_task_left, worker_has_been_dead := c.GetNextTaskIndex(&c.WorkerActivityRecorder, &c.MapTaskDistributor, worker_index)
 	if worker_has_been_dead {
+		//fmt.Printf("Get files for worker %v Terminated.\n", worker_index)
 		reply.TerminateWorker = true
 		return nil
 	}
+	// fmt.Printf("Get files for worker %v, map_task_index = %v, no_map_task_left = %v\n", worker_index, map_task_index, no_map_task_left)
 	reply.TerminateWorker = false
 	if no_map_task_left {
 		if c.MapTaskDistributor.AllWorkComplete() {
@@ -240,6 +241,10 @@ func (c *Coordinator) NextFileNamesToHandle(args *GetNextFileNamesToHandleArgs, 
 	reply.WaitForTask = false
 	reply.StartReduceTask = false
 	distributed_file_names := c.GetListOfFileNamesForEachWorkerIndex(map_task_index)
+	if len(distributed_file_names) == 0 {
+		reply.WaitForTask = true
+		c.MapTaskDistributor.SetWorkComplete(map_task_index)
+	}
 	reply.FileNames = distributed_file_names
 	reply.MapTaskIndex = map_task_index
 	return nil
@@ -320,9 +325,7 @@ func MakeCoordinator(files []string, n_reduce int) *Coordinator {
 	}
 	c.WorkerActivityRecorder.InitializeActivityRecorder(n_reduce)
 	c.MapTaskDistributor.InitializeWorkDistributor(n_reduce, n_reduce)
-	//c.MapTaskCompletionStatus.Initialize(n_reduce)
 	c.ReduceDistributor.InitializeWorkDistributor(n_reduce, n_reduce)
-	//c.ReduceCompletionStatus.Initialize(n_reduce)
 
 	c.server()
 	return c
