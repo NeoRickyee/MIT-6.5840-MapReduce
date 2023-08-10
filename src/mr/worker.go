@@ -157,8 +157,7 @@ func WorkerReduceTask(reducef func(string, []string) string, worker_index int, n
 		// "mr-X-Y"
 		file, err := os.Open(file_name)
 		if err != nil {
-			log.Fatalf("cannot open %v", file_name)
-			// Could just be this Worker crashed before completing Map Task
+			// log.Fatalf("cannot open %v", file_name)
 			continue
 		}
 		dec := json.NewDecoder(file)

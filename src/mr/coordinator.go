@@ -48,7 +48,7 @@ func (recorder *ActivityRecorder) RecordCurrentCommTime(worker_index int) bool {
 	}
 }
 
-func (recorder *ActivityRecorder) GetNewDeadThreads(nReduce int) *[]int {
+func (recorder *ActivityRecorder) GetNewDeadThreads(nReduce int) []int {
 	var current_seconds int64 = time.Now().Unix()
 	var all_dead_threads []int
 	for i := 0; i < nReduce; i++ {
@@ -66,7 +66,7 @@ func (recorder *ActivityRecorder) GetNewDeadThreads(nReduce int) *[]int {
 			recorder.ThreadAliveStatus[dead_thread_index] = false
 		}
 	}
-	return &new_dead_threads
+	return new_dead_threads
 }
 
 // worker index, allocation successful
@@ -148,12 +148,12 @@ func (distributor *WorkIndexDistributor) SetWorkComplete(work_index int) {
 
 func (distributor *WorkIndexDistributor) AllWorkComplete() bool {
 	distributor.MuWorkCompleted.Lock()
+	defer distributor.MuWorkCompleted.Unlock()
 	for _, val := range distributor.WorkCompleted {
 		if !val {
 			return false
 		}
 	}
-	distributor.MuWorkCompleted.Unlock()
 	return true
 }
 
@@ -186,7 +186,7 @@ func (c *Coordinator) GetNextTaskIndex(activity_recorder *ActivityRecorder, task
 	// if there is currently no remaining task
 	// check if any worker thread newly dead, take over task
 	new_dead_threads := activity_recorder.GetNewDeadThreads(c.nReduce)
-	for _, dead_thread_index := range *new_dead_threads {
+	for _, dead_thread_index := range new_dead_threads {
 		task_distributor.WorkerDeathProcessing(dead_thread_index)
 	}
 	task_index, no_remaining_task = task_distributor.GetWork(worker_index)
@@ -285,6 +285,7 @@ func (c *Coordinator) NextReduceTaskToStart(arg *GetNextReduceTaskArgs, reply *G
 }
 
 func (c *Coordinator) ReduceCompletion(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
+	//fmt.Printf("Worker %v completed Reduce task %v\n", args.WorkerNumber, args.ReduceTaskIndex)
 	var worker_declared_dead bool = c.WorkerActivityRecorder.RecordCurrentCommTime(args.WorkerNumber)
 	if worker_declared_dead {
 		reply.TerminateWorker = true
