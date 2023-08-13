@@ -147,8 +147,8 @@ func (distributor *WorkIndexDistributor) SetWorkComplete(work_index int) {
 }
 
 func (distributor *WorkIndexDistributor) AllWorkComplete() bool {
-	distributor.MuWorkCompleted.Lock()
-	defer distributor.MuWorkCompleted.Unlock()
+	//distributor.MuWorkCompleted.Lock()
+	//defer distributor.MuWorkCompleted.Unlock()
 	for _, val := range distributor.WorkCompleted {
 		if !val {
 			return false
@@ -190,7 +190,7 @@ func (c *Coordinator) GetNextTaskIndex(activity_recorder *ActivityRecorder, task
 		task_distributor.WorkerDeathProcessing(dead_thread_index)
 	}
 	task_index, no_remaining_task = task_distributor.GetWork(worker_index)
-	return task_index, true, false
+	return task_index, no_remaining_task, false
 }
 
 // Your code here -- RPC handlers for the worker to call.

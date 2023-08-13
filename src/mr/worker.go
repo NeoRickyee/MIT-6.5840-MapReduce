@@ -57,7 +57,6 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		var wait_for_task, go_to_reduce, terminate_worker bool
 		for {
 			file_names, map_task_index, wait_for_task, go_to_reduce, terminate_worker = FetchFileNamesToMap(worker_index)
-			//fmt.Printf("Worker %v fetched file names. map_task_index = %v, wait_for_task = %v, go_to_reduce = %v, terminate_worker = %v\n", worker_index, map_task_index, wait_for_task, go_to_reduce, terminate_worker)
 			if terminate_worker {
 				return
 			}
@@ -69,8 +68,6 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		if go_to_reduce {
 			break
 		}
-
-		//fmt.Printf("Worker %v got Map task number %v.\n", worker_index, map_task_index)
 		for _, file_name := range file_names {
 			WorkerMapTask(mapf, file_name, &intermediate)
 		}
@@ -256,7 +253,6 @@ func FetchFileNamesToMap(worker_index int) ([]string, int, bool, bool, bool) {
 func IndicateMapTaskCompletion(worker_index int, map_task_index int) bool {
 	args := WorkerMapTaskCompletionArgs{worker_index, map_task_index}
 	reply := WorkerMapTaskCompletionReply{}
-	// fmt.Println("Map Task Complete for worker number:", worker_index)
 	ok := call("Coordinator.WorkerMapTaskCompletion", &args, &reply)
 	if !ok {
 		fmt.Printf("Worker indicates Map task completion failed!\n")
